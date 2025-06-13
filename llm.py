@@ -1,9 +1,11 @@
 import os
 
 from dotenv import load_dotenv
-from langchain import hub
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnableLambda, RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
@@ -32,6 +34,12 @@ def get_database():
 
     return database
 
+store = {}
+
+def get_session_history(session_id: str) -> BaseChatMessageHistory:
+    if session_id not in store:
+        store[session_id] = ChatMessageHistory()
+    return store[session_id]
 
 ## retrievalQA 함수 정의 ===============================================================
 def get_retrievalQA(): 
@@ -40,30 +48,71 @@ def get_retrievalQA():
     ## vector store에서 index 정보
     database = get_database()
 
-    ## prompt
-    prompt = hub.pull('rlm/rag-prompt', api_key=LANGCHAIN_API_KEY)
+    # prompt
+    # prompt = hub.pull('rlm/rag-prompt', api_key=LANGCHAIN_API_KEY)
+
+    ### Answer question ###Add commentMore actions
+    system_prompt = (
+    '''[identity]
+- 당신은 이혼 전문 법률 전문가입니다.
+- [context]를 참고하여 사용자의 질문에 답변하세요.
+- 마음이 힘든 사용자의 마음을 위로해주며 부드러우면서 정확하게 답변하세요.
+- 답변에는 해당 조항을 '(xx법 제 x조 제 x호, xx법 제 x조 제 x호)'형식으로 문단 마지막에 적어주세요.
+- 항복별로 표시해서 답변해주세요.
+- 이혼법률 이외에의 질문에는 '이혼과 관련된 질문을 해주세요.'로 답변하세요.
+
+[Context]
+{context} 
+'''
+    )
+
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+
     
     ## LLM 모델 
     llm = get_llm()
 
     def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
+    
+    input_str = RunnableLambda(lambda x: x['input'])
 
     qa_chain =  (
         {
-            'context': database.as_retriever() | format_docs,
-            'question':RunnablePassthrough(),
+            'context': input_str | database.as_retriever() | format_docs,
+            'input': input_str,
+            'chat_history': RunnableLambda(lambda x: x['chat_history'])
         }
-        | prompt
+        | qa_prompt
         | llm
         | StrOutputParser()
     )
 
-    return qa_chain
+    conversational_rag_chain = RunnableWithMessageHistory(
+    qa_chain,
+    get_session_history,
+    input_messages_key="input",
+    history_messages_key="chat_history",
+)
+    return conversational_rag_chain
 
-def get_ai_message(user_message):
+
+
+def get_ai_message(user_message, session_id='default'):
 
     qa_chain = get_retrievalQA()
-    ai_message = qa_chain.invoke(user_message)
+    ai_message = qa_chain.invoke(
+        {"input": user_message}, 
+        config={"configurable": {"session_id": session_id}}
+    )
+
+    print(f'대화 이력 >> { get_session_history(session_id)}\n\n')
 
     return ai_message
