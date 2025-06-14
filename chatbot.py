@@ -2,12 +2,20 @@ import time
 import uuid
 import streamlit as st
 from llm import stream_ai_message
+import yaml
 
 st.set_page_config(page_title='이혼 상담 챗봇', page_icon='🌟')
 st.markdown("""
     <h1 style='text-align: center; color: #4b0082;'> 당신과 함께하는 도움챗봇 🌟 </h1>
     <p style='text-align: center; font-size: 18px; color: gray;'> 혼자가 아닙니다. 마음이 힘든 당신을 도와드립니다.</p>
 """, unsafe_allow_html=True)
+
+
+FAQ_LIST = [
+    "이혼하려면 어떻게 해야 하나요?",
+    "양육권은 누가 가지게 되나요?",
+    "재산 분할은 어떻게 진행되나요?"
+]
 
 query_params = st.query_params
 
@@ -30,13 +38,28 @@ for message in st.session_state.message_list:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
+def load_faq_list(file_path="faq.yaml"):
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return data.get("faq", [])
+
+## FAQ 버튼 영역
+st.subheader("🔎 자주 묻는 질문")
+user_question = None
+for faq in FAQ_LIST:
+    if st.button(faq):
+        user_question = faq
+
 ## 채팅 메시지 ====================================================================
 placeholder = '이혼과 관련된 질문을 작성해 주세요.'
-if user_question := st.chat_input(placeholder=placeholder): 
+chat_input = st.chat_input(placeholder=placeholder)
+if chat_input:
+    user_question = chat_input
     
+if user_question:  
     with st.chat_message('user'):
         ## 사용자 메시지 화면 출력
-        st.write(user_question)
+        st.markdown(user_question)
     st.session_state.message_list.append({'role': 'user', 'content': user_question})
     
     ## AI 메시지
@@ -52,7 +75,6 @@ if user_question := st.chat_input(placeholder=placeholder):
                 ai_message += chunk
                 ai_response_box.markdown(ai_message + "▌")  
                 time.sleep(0.05)  
-
             ai_response_box.markdown(ai_message)
 
     st.session_state.message_list.append({
