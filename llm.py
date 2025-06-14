@@ -42,15 +42,7 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
         store[session_id] = ChatMessageHistory()
     return store[session_id]
 
-## retrievalQA 함수 정의 ===============================================================
-def get_retrievalQA(): 
-    llm = get_llm()
-    LANGCHAIN_API_KEY = os.getenv('LANGCHAIN_API_KEY')
-
-    ## vector store에서 index 정보
-    database = get_database()
-    retriever = database.as_retriever(search_kwargs={"k": 3})
-
+def get_history_retriever(llm, retriever):
     contextualize_q_system_prompt = (
     "다음은 이혼 상담 대화 내용입니다.\n"
     "사용자가 방금 입력한 질문은 이전 대화 내용을 참고하고 있을 수 있습니다.\n"
@@ -69,14 +61,17 @@ def get_retrievalQA():
     history_aware_retriever = create_history_aware_retriever(
     llm, retriever, contextualize_q_prompt
 )
-    ### Answer question ###Add commentMore actions
+
+    return history_aware_retriever
+
+def get_qa_prompt():
     system_prompt = (
     '''[identity]
 - 당신은 이혼 전문 법률 전문가입니다.
 - [context]를 참고하여 사용자의 질문에 답변하세요.
 - 마음이 힘든 사용자의 마음을 위로해주며 부드러우면서 정확하게 답변하세요.
 - 답변에는 해당 조항을 '(xx법 제 x조 제 x호, xx법 제 x조 제 x호)'형식으로 문단 마지막에 적어주세요.
-- 항복별로 표시해서 답변해주세요.
+- 항목별로 표시해서 답변해주세요.
 - 이혼법률 이외에의 질문에는 '이혼과 관련된 질문을 해주세요.'로 답변하세요.
 [Context]\n{context} 
 '''
@@ -89,7 +84,21 @@ def get_retrievalQA():
             ("human", "{input}"),
         ]
     )
-    
+    return qa_prompt
+
+def build_conversational_chain(): 
+    LANGCHAIN_API_KEY = os.getenv('LANGCHAIN_API_KEY')
+
+    llm = get_llm()
+
+    ## vector store에서 index 정보
+    database = get_database()
+    retriever = database.as_retriever(search_kwargs={"k": 3})
+
+    history_aware_retriever = get_history_retriever(llm, retriever)
+
+    qa_prompt = get_qa_prompt()
+
     ## LLM 모델 
     question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
 
@@ -105,9 +114,9 @@ def get_retrievalQA():
 
     return conversational_rag_chain
 
-def get_ai_message(user_message, session_id='default'):
+def stream_ai_message(user_message, session_id='default'):
 
-    qa_chain = get_retrievalQA()
+    qa_chain = build_conversational_chain()
     for chunk in qa_chain.stream(
         {"input": user_message},
         config={"configurable": {"session_id": session_id}}
@@ -115,5 +124,3 @@ def get_ai_message(user_message, session_id='default'):
         yield chunk
    
     print(f'대화 이력 >> { get_session_history(session_id)}\n\n')
-
-    # return ai_message
