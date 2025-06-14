@@ -1,11 +1,13 @@
 import os
 
 from dotenv import load_dotenv
+from langchain.chains import (create_history_aware_retriever,
+                              create_retrieval_chain)
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableLambda, RunnableWithMessageHistory
+from langchain_core.runnables import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
@@ -13,9 +15,8 @@ from pinecone import Pinecone
 load_dotenv()
 
 
-def get_llm(model='gpt-4o'):
-    llm = ChatOpenAI(model=model)
-    return llm
+def get_llm(model: str = "gpt-4o"):
+    return ChatOpenAI(model=model, temperature=0.7)
 
 
 ## database 함수 정의 ==================================================================
@@ -43,14 +44,31 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 
 ## retrievalQA 함수 정의 ===============================================================
 def get_retrievalQA(): 
+    llm = get_llm()
     LANGCHAIN_API_KEY = os.getenv('LANGCHAIN_API_KEY')
 
     ## vector store에서 index 정보
     database = get_database()
+    retriever = database.as_retriever(search_kwargs={"k": 3})
 
-    # prompt
-    # prompt = hub.pull('rlm/rag-prompt', api_key=LANGCHAIN_API_KEY)
-
+    contextualize_q_system_prompt = (
+    "다음은 이혼 상담 대화 내용입니다.\n"
+    "사용자가 방금 입력한 질문은 이전 대화 내용을 참고하고 있을 수 있습니다.\n"
+    "이 질문을 단독으로도 이해할 수 있도록 다시 작성해 주세요.\n"
+    "단, 질문에 직접적으로 답하지는 마세요.\n"
+    "질문을 재구성할 필요가 없다면 그대로 반환해 주세요."
+)      
+    
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", contextualize_q_system_prompt),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+    ]
+)
+    history_aware_retriever = create_history_aware_retriever(
+    llm, retriever, contextualize_q_prompt
+)
     ### Answer question ###Add commentMore actions
     system_prompt = (
     '''[identity]
@@ -60,9 +78,7 @@ def get_retrievalQA():
 - 답변에는 해당 조항을 '(xx법 제 x조 제 x호, xx법 제 x조 제 x호)'형식으로 문단 마지막에 적어주세요.
 - 항복별로 표시해서 답변해주세요.
 - 이혼법률 이외에의 질문에는 '이혼과 관련된 질문을 해주세요.'로 답변하세요.
-
-[Context]
-{context} 
+[Context]\n{context} 
 '''
     )
 
@@ -73,46 +89,31 @@ def get_retrievalQA():
             ("human", "{input}"),
         ]
     )
-
-
     
     ## LLM 모델 
-    llm = get_llm()
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
 
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
     
-    input_str = RunnableLambda(lambda x: x['input'])
-
-    qa_chain =  (
-        {
-            'context': input_str | database.as_retriever() | format_docs,
-            'input': input_str,
-            'chat_history': RunnableLambda(lambda x: x['chat_history'])
-        }
-        | qa_prompt
-        | llm
-        | StrOutputParser()
-    )
-
     conversational_rag_chain = RunnableWithMessageHistory(
-    qa_chain,
-    get_session_history,
-    input_messages_key="input",
-    history_messages_key="chat_history",
-)
+        rag_chain,
+        get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+        output_messages_key='answer',
+    ).pick('answer')
+
     return conversational_rag_chain
-
-
 
 def get_ai_message(user_message, session_id='default'):
 
     qa_chain = get_retrievalQA()
-    ai_message = qa_chain.invoke(
-        {"input": user_message}, 
+    for chunk in qa_chain.stream(
+        {"input": user_message},
         config={"configurable": {"session_id": session_id}}
-    )
-
+    ):
+        yield chunk
+   
     print(f'대화 이력 >> { get_session_history(session_id)}\n\n')
 
-    return ai_message
+    # return ai_message

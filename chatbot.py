@@ -1,6 +1,6 @@
 import streamlit as st
 from llm import get_ai_message
-
+import time
 
 st.set_page_config(page_title='이혼 상담 챗봇', page_icon='🌟')
 st.markdown("""
@@ -34,8 +34,19 @@ if user_question := st.chat_input(placeholder=placeholder):
         
         with st.chat_message('ai'):
             ## AI 메시지 화면 출력
-            st.write(ai_message)
-        st.session_state.message_list.append({'role': 'ai', 'content': ai_message})
+            ai_response_box = st.empty()
+            ai_message = ""
+
+            for chunk in get_ai_message(user_question, session_id=session_id):
+                ai_message += chunk
+                ai_response_box.markdown(ai_message + "▌")  # 타이핑 효과 커서
+                time.sleep(0.05)  # 출력 속도 조절
+
+            ai_response_box.markdown(ai_message)
+
+    st.session_state.message_list.append({
+        'role': 'ai',
+        'content': ai_message
+    })
 
 print(f'after:{st.session_state.message_list}')
-
