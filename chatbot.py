@@ -1,3 +1,4 @@
+import os
 import time
 import uuid
 import streamlit as st
@@ -39,7 +40,9 @@ for message in st.session_state.message_list:
         st.write(message["content"])
 
 def load_faq_list(file_path="faq.yaml"):
-    with open(file_path, "r", encoding="utf-8") as f:
+    dir_path = os.path.dirname(os.path.abspath(__file__))  # 현재 py파일 위치
+    full_path = os.path.join(dir_path, file_path)
+    with open(full_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return data.get("faq", [])
 
@@ -55,7 +58,7 @@ placeholder = '이혼과 관련된 질문을 작성해 주세요.'
 chat_input = st.chat_input(placeholder=placeholder)
 if chat_input:
     user_question = chat_input
-    
+
 if user_question:  
     with st.chat_message('user'):
         ## 사용자 메시지 화면 출력
