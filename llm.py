@@ -1,3 +1,4 @@
+import json
 import os
 
 from dotenv import load_dotenv
@@ -63,17 +64,34 @@ def get_history_retriever(llm, retriever):
 )
 
     return history_aware_retriever
+## 사전로드 ======================================================
 
-def get_qa_prompt():
+def load_dictionary_from_file(path='keyword_dictionary.json'):
+    with open(path, 'r', encoding='utf-8') as file:
+       return json.load(file)
+
+def build_dictionary_text(dictionary: dict) -> str:
+   return '\n'.join([
+    f'{k} ({", ".join(v["tags"])}): {v["definition"]} [출처: {v["source"]}]'
+    for k, v in  dictionary.items()
+])
+
+## QA prompt ======================================================
+def get_qa_prompt(): 
+    keyword_dictionary = load_dictionary_from_file()
+    dictionary_text = build_dictionary_text(keyword_dictionary)
+
     system_prompt = (
     '''[identity]
 - 당신은 이혼 전문 법률 전문가입니다.
-- [context]를 참고하여 사용자의 질문에 답변하세요.
-- 마음이 힘든 사용자의 마음을 위로해주며 부드러우면서 정확하게 답변하세요.
+- [context]와 [keyword_dictionary]를 참고하여 사용자의 질문에 답변하세요.
+- 마음이 힘든 사용자의 마음을 위로하며 부드럽고 따뜻한 말투로 정확하게 답변하세요.
 - 답변에는 해당 조항을 '(xx법 제 x조 제 x호, xx법 제 x조 제 x호)'형식으로 문단 마지막에 적어주세요.
 - 항목별로 표시해서 답변해주세요.
 - 이혼법률 이외에의 질문에는 '이혼과 관련된 질문을 해주세요.'로 답변하세요.
 [Context]\n{context} 
+
+[keyword_dictionary]\n{dictionary_text}
 '''
     )
 
@@ -83,7 +101,8 @@ def get_qa_prompt():
             MessagesPlaceholder("chat_history"),
             ("human", "{input}"),
         ]
-    )
+    ).partial(dictionary_text=dictionary_text)
+
     return qa_prompt
 
 def build_conversational_chain(): 
